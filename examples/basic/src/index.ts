@@ -57,9 +57,11 @@ async function main() {
     10,
   );
 
-  await db.$transaction(async (tx) => {
-    await tx.user.create({ data: { id: 1n, email: 'a@b.com', name: 'Pavel' } });
-    await tx.user.create({ data: { id: 2n, email: 'c@d.com', name: null } });
+  await db.user.createMany({
+    data: [
+      { id: 1n, email: 'a@b.com', name: 'Pavel' },
+      { id: 2n, email: 'c@d.com', name: null },
+    ],
   });
 
   const rows = await db.user.findMany({

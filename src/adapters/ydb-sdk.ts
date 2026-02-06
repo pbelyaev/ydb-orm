@@ -33,6 +33,16 @@ function normalizeNative(t: Ydb.IType, value: any): any {
     return value.map((v) => normalizeNative(itemType, v));
   }
 
+  if ((t as any).structType?.members) {
+    const members = (t as any).structType.members as Array<{ name: string; type: Ydb.IType }>;
+    if (value === null || value === undefined) return value;
+    const out: any = {};
+    for (const m of members) {
+      out[m.name] = normalizeNative(m.type, (value as any)[m.name]);
+    }
+    return out;
+  }
+
   const typeId = (t as any).typeId;
   if (typeId === 3 /* INT64 */ && typeof value === 'bigint') {
     return Long.fromString(value.toString(), false);

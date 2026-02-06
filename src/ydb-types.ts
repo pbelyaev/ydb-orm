@@ -34,6 +34,18 @@ export function ydbTypeToYqlString(t: Ydb.IType): string {
   if ((t as any).listType?.item) {
     return `List<${ydbTypeToYqlString((t as any).listType.item)}>`;
   }
+  if ((t as any).structType?.members) {
+    const members = (t as any).structType.members as Array<{ name: string; type: Ydb.IType }>;
+    const inner = members
+      .map((m) => {
+        // YQL struct member names are quoted with single quotes
+        const name = String(m.name).replace(/'/g, "''");
+        return `'${name}':${ydbTypeToYqlString(m.type)}`;
+      })
+      .join(',');
+    return `Struct<${inner}>`;
+  }
+
   if (typeof (t as any).typeId === 'number') {
     const name = typeIdToYql.get((t as any).typeId);
     if (!name) throw new Error(`Unknown typeId for DECLARE: ${(t as any).typeId}`);

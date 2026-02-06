@@ -88,6 +88,10 @@ export type CreateArgs<M> = {
   returning?: Select<M>;
 };
 
+export type CreateManyArgs<M> = {
+  data: Array<DeepPartial<M>>;
+};
+
 export type UpdateArgs<M> = {
   where: Where<M>;
   data: DeepPartial<M>;
@@ -308,8 +312,7 @@ export class ModelClient<M extends Record<string, any>> {
         }
 
         params[pn] = v;
-        // If value is null for a nullable column, keep Optional<T> (don't double-wrap).
-        paramTypes[pn] = v === null ? columnYdbType(colDef) : columnYdbType(colDef);
+        paramTypes[pn] = columnYdbType(colDef);
         return param(pn);
       })
       .join(', ');
@@ -321,6 +324,53 @@ export class ModelClient<M extends Record<string, any>> {
     const rows = await this.adapter.query({ text, params, paramTypes });
     const row = rows[0] as any;
     return row ? (args.returning ? pickSelected(row, args.returning as any) : row) : null;
+  }
+
+  async createMany(args: CreateManyArgs<M>): Promise<{ count: number }> {
+    if (!args.data.length) return { count: 0 };
+
+    // Use union of keys present in any row.
+    const cols = Array.from(new Set(args.data.flatMap((r) => Object.keys(r as any)))) as (keyof M & string)[];
+    if (!cols.length) return { count: 0 };
+
+    // Validate and normalize rows: fill missing keys with null.
+    const rows = args.data.map((r) => {
+      const out: any = {};
+      for (const c of cols) {
+        const colDef = this.model.columnDefs[c];
+        if (!colDef) throw new Error(`Unknown column in createMany: ${String(c)}`);
+
+        const v = (r as any)[c];
+        if (v === undefined) {
+          out[c] = null;
+          if (!(colDef as any).isNullable) {
+            throw new Error(`Missing value for non-nullable column in createMany: ${String(c)}`);
+          }
+        } else {
+          if (v === null && !(colDef as any).isNullable) {
+            throw new Error(`Non-nullable column cannot be null in createMany: ${String(c)}`);
+          }
+          out[c] = v;
+        }
+      }
+      return out;
+    });
+
+    const structMembers = cols.map((c) => ({ name: c, type: columnYdbType(this.model.columnDefs[c]!) }));
+    const rowType: Ydb.IType = { structType: { members: structMembers as any } };
+    const rowsType: Ydb.IType = { listType: { item: rowType } };
+
+    const params: Record<string, any> = { rows };
+    const paramTypes: Record<string, Ydb.IType> = { rows: rowsType };
+
+    const names = cols.map(ident).join(', ');
+    const selectList = cols.map((c) => ident(c)).join(', ');
+
+    const stmt = `UPSERT INTO ${ident(this.model.def.table)} (${names}) SELECT ${selectList} FROM AS_TABLE($rows)`;
+    const text = withDeclares(stmt, paramTypes);
+    await this.adapter.query({ text, params, paramTypes });
+
+    return { count: args.data.length };
   }
 
   async update(args: UpdateArgs<M>): Promise<Partial<M> | null> {
