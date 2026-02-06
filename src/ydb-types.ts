@@ -1,38 +1,31 @@
+import { createRequire } from 'node:module';
 import type { Ydb } from 'ydb-sdk';
-import { primitiveTypeToValue } from 'ydb-sdk';
 
-function primitiveNameToYql(name: string): string {
-  // YDB SDK uses proto enum names (e.g. UTF8, UINT64, JSON_DOCUMENT)
-  switch (name) {
-    case 'UTF8':
-      return 'Utf8';
-    case 'TEXT':
-      return 'String';
-    case 'BOOL':
-      return 'Bool';
-    case 'INT32':
-      return 'Int32';
-    case 'INT64':
-      return 'Int64';
-    case 'UINT32':
-      return 'Uint32';
-    case 'UINT64':
-      return 'Uint64';
-    case 'TIMESTAMP':
-      return 'Timestamp';
-    case 'BYTES':
-      return 'Bytes';
-    case 'YSON':
-      return 'Yson';
-    case 'JSON':
-      return 'Json';
-    case 'JSON_DOCUMENT':
-      return 'JsonDocument';
-    default:
-      // Fallback: keep SDK spelling.
-      return name;
-  }
-}
+// Works in both ESM and CJS builds
+const require = createRequire(typeof __filename === 'string' ? __filename : import.meta.url);
+const ydb: any = require('ydb-sdk');
+const { Types } = ydb;
+
+// IMPORTANT:
+// ydb-sdk exports `primitiveTypeToValue` which maps typeId -> *value field name* (e.g. uint64Value),
+// but YQL DECLARE needs *type name* (Uint64). So we build our own mapping from Types.*.
+const typeIdToYql = new Map<number, string>([
+  [Types.BOOL.typeId, 'Bool'],
+  [Types.INT32.typeId, 'Int32'],
+  [Types.INT64.typeId, 'Int64'],
+  [Types.UINT32.typeId, 'Uint32'],
+  [Types.UINT64.typeId, 'Uint64'],
+  // NOTE: ydb-sdk currently represents both TEXT/UTF8 with the same primitive typeId.
+  // For YQL DECLARE we default to Utf8, which matches typical table schemas.
+  [Types.UTF8.typeId, 'Utf8'],
+  [Types.TEXT.typeId, 'Utf8'],
+
+  [Types.TIMESTAMP.typeId, 'Timestamp'],
+  [Types.JSON.typeId, 'Json'],
+  [Types.JSON_DOCUMENT.typeId, 'JsonDocument'],
+  [Types.YSON.typeId, 'Yson'],
+  [Types.BYTES.typeId, 'Bytes'],
+]);
 
 export function ydbTypeToYqlString(t: Ydb.IType): string {
   if ((t as any).optionalType?.item) {
@@ -42,10 +35,10 @@ export function ydbTypeToYqlString(t: Ydb.IType): string {
     return `List<${ydbTypeToYqlString((t as any).listType.item)}>`;
   }
   if (typeof (t as any).typeId === 'number') {
-    const name = primitiveTypeToValue[(t as any).typeId];
-    if (!name) throw new Error(`Unknown primitive typeId: ${(t as any).typeId}`);
-    return primitiveNameToYql(name);
+    const name = typeIdToYql.get((t as any).typeId);
+    if (!name) throw new Error(`Unknown typeId for DECLARE: ${(t as any).typeId}`);
+    return name;
   }
 
-  throw new Error(`Unsupported YDB type shape: ${JSON.stringify(t)}`);
+  throw new Error('Unsupported YDB type shape for DECLARE');
 }

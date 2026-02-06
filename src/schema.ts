@@ -1,6 +1,11 @@
 import type { Simplify } from './types.js';
-import { Types } from 'ydb-sdk';
+import { createRequire } from 'node:module';
 import type { Ydb } from 'ydb-sdk';
+
+// Works in both ESM and CJS builds
+const require = createRequire(typeof __filename === 'string' ? __filename : import.meta.url);
+const ydb: any = require('ydb-sdk');
+const { Types } = ydb;
 
 export type ColumnTypeName =
   | 'Bool'
@@ -19,7 +24,7 @@ export type ColumnTypeName =
 export type ColumnDef<T> = {
   yqlType: ColumnTypeName;
   /** When present, column is nullable. Kept as literal `true` to preserve type narrowing. */
-  nullable?: true;
+  isNullable?: true;
   // for future: default, validators, etc.
   __ts?: (v: T) => void;
 };
@@ -60,7 +65,7 @@ export function columnYdbType(c: ColumnDef<any>): YdbType {
       }
     }
   })();
-  return c.nullable ? Types.optional(base) : base;
+  return c.isNullable ? Types.optional(base) : base;
 }
 
 
@@ -88,7 +93,7 @@ export type ModelDef<Cols extends Record<string, ColumnDef<any>>> = {
 export type SchemaDef = Record<string, ModelDef<Record<string, ColumnDef<any>>>>;
 
 export type InferColumn<C extends ColumnDef<any>> = C extends ColumnDef<infer T>
-  ? C['nullable'] extends true
+  ? C['isNullable'] extends true
     ? T | null
     : T
   : never;
@@ -97,18 +102,18 @@ export type InferModel<M extends ModelDef<any>> = Simplify<{
   [K in keyof M['columns']]: InferColumn<M['columns'][K]>;
 }>;
 
-export function nullable<C extends ColumnDef<any>>(c: C): C & { nullable: true } {
-  return { ...(c as any), nullable: true };
+export function nullable<C extends ColumnDef<any>>(c: C): C & { isNullable: true } {
+  return { ...(c as any), isNullable: true };
 }
 
 // Ergonomic: t.utf8().nullable()
 export type NullableMethod<C extends ColumnDef<any>> = C & {
-  nullable: () => C & { nullable: true };
+  nullable: () => C & { isNullable: true };
 };
 
 function withNullable<C extends ColumnDef<any>>(c: C): NullableMethod<C> {
   return Object.assign(c as any, {
-    nullable: () => ({ ...(c as any), nullable: true as const }),
+    nullable: () => ({ ...(c as any), isNullable: true as const }),
   }) as NullableMethod<C>;
 }
 

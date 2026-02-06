@@ -44,6 +44,7 @@
     "format": "prettier -w ."
   },
   "dependencies": {
+    "@yandex-cloud/nodejs-sdk": "^2.9.0",
     "ydb-sdk": "^5.11.1"
   },
   "devDependencies": {

@@ -140,7 +140,8 @@ function buildWhereExpr<M>(
       if (op === 'IN') {
         ydbType = { listType: { item: ydbType } };
       } else if (value === null) {
-        ydbType = { optionalType: { item: ydbType } };
+        // If column already Optional<...>, keep it.
+        if (!(colDef as any).isNullable) ydbType = { optionalType: { item: ydbType } };
       }
       paramTypes[name] = ydbType;
       params[name] = value;
@@ -302,8 +303,13 @@ export class ModelClient<M extends Record<string, any>> {
         const colDef = this.model.columnDefs[c];
         if (!colDef) throw new Error(`Unknown column in create: ${String(c)}`);
 
+        if (v === null && !(colDef as any).isNullable) {
+          throw new Error(`Non-nullable column cannot be null: ${String(c)}`);
+        }
+
         params[pn] = v;
-        paramTypes[pn] = v === null ? ({ optionalType: { item: columnYdbType(colDef) } } as any) : columnYdbType(colDef);
+        // If value is null for a nullable column, keep Optional<T> (don't double-wrap).
+        paramTypes[pn] = v === null ? columnYdbType(colDef) : columnYdbType(colDef);
         return param(pn);
       })
       .join(', ');
@@ -328,8 +334,13 @@ export class ModelClient<M extends Record<string, any>> {
       const colDef = this.model.columnDefs[col];
       if (!colDef) throw new Error(`Unknown column in update: ${col}`);
 
+      if (value === null && !(colDef as any).isNullable) {
+        throw new Error(`Non-nullable column cannot be null: ${col}`);
+      }
+
       params[pn] = value;
-      paramTypes[pn] = value === null ? ({ optionalType: { item: columnYdbType(colDef) } } as any) : columnYdbType(colDef);
+      // nullable column already maps to Optional<T>
+      paramTypes[pn] = columnYdbType(colDef);
       setParts.push(`${ident(col)} = ${param(pn)}`);
     }
 

@@ -1,34 +1,21 @@
-import { Driver, TableSessionPool, getCredentialsFromEnv, TypedData, declareType, Types } from 'ydb-sdk';
+import { createRequire } from 'node:module';
 import { defineSchema, t, ydbOrm, ydbSdkAdapter } from '@pbelyaev/ydb-orm';
+
+const require = createRequire(import.meta.url);
+const { Driver, TableSessionPool, Types, AnonymousAuthService } = require('ydb-sdk');
 
 const endpoint = process.env.YDB_ENDPOINT ?? 'grpc://localhost:2136';
 const database = process.env.YDB_DATABASE ?? '/local';
-
-class UserRow extends TypedData {
-  @declareType(Types.UINT64)
-  id!: any;
-
-  @declareType(Types.UTF8)
-  email!: string;
-
-  @declareType(Types.optional(Types.UTF8))
-  name!: string | null;
-}
 
 async function main() {
   const driver = new Driver({
     endpoint,
     database,
-    authService: getCredentialsFromEnv(),
+    authService: new (require('ydb-sdk').AnonymousAuthService)(),
   });
   await driver.ready(10_000);
 
-  const pool = new TableSessionPool({
-    database,
-    authService: driver.authService,
-    sslCredentials: driver.sslCredentials,
-    clientOptions: driver.clientOptions,
-  });
+  const pool = new TableSessionPool(driver.clientSettings);
 
   const adapter = ydbSdkAdapter({ pool, idempotent: true });
 
