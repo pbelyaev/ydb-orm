@@ -386,7 +386,11 @@ export type OrmClient<S extends SchemaDef> = Simplify<{
   [K in keyof S]: ModelClient<InferModel<S[K]>>;
 }>;
 
-export function ydbOrm<const S extends SchemaDef>(opts: { schema: S; adapter: Adapter }): OrmClient<S> {
+export type OrmRoot<S extends SchemaDef> = OrmClient<S> & {
+  $transaction: <T>(fn: (tx: OrmClient<S>) => Promise<T>) => Promise<T>;
+};
+
+export function ydbOrm<const S extends SchemaDef>(opts: { schema: S; adapter: Adapter }): OrmRoot<S> {
   const out: any = {};
   for (const [name, def] of Object.entries(opts.schema)) {
     const columns = Object.keys(def.columns);
@@ -395,5 +399,14 @@ export function ydbOrm<const S extends SchemaDef>(opts: { schema: S; adapter: Ad
       opts.adapter,
     );
   }
-  return out as OrmClient<S>;
+
+  out.$transaction = async (fn: any) => {
+    const { runInTransaction } = await import('./tx.js');
+    return runInTransaction(opts.adapter as any, async () => {
+      // For now tx uses the same adapter instance (adapters may internally bind a session/tx).
+      return fn(out as OrmClient<S>);
+    });
+  };
+
+  return out as OrmRoot<S>;
 }
