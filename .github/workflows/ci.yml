@@ -50,6 +50,19 @@ jobs:
           npm install
           npx ts-node --esm src/index.ts
 
+      - name: Example (express-crud smoke)
+        env:
+          YDB_ENDPOINT: grpc://localhost:2136
+          YDB_DATABASE: /local
+        run: |
+          cd examples/express-crud
+          npm install
+          npm run dev &
+          APP_PID=$!
+          sleep 2
+          ./smoke.sh
+          kill $APP_PID || true
+
       - name: Stop local YDB
         if: always()
         run: docker compose -f examples/ydb-local/docker-compose.yml down -v
