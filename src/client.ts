@@ -64,8 +64,16 @@ export type FindManyArgs<M> = {
   where?: Where<M>;
   select?: Select<M>;
   orderBy?: OrderBy<M>;
+
+  /** SQL-like */
   limit?: number;
+  /** SQL-like */
   offset?: number;
+
+  /** Prisma-like alias for offset */
+  skip?: number;
+  /** Prisma-like alias for limit */
+  take?: number;
 };
 
 export type FindFirstArgs<M> = Omit<FindManyArgs<M>, 'limit'> & { limit?: number };
@@ -257,8 +265,12 @@ export class ModelClient<M extends Record<string, any>> {
     const selectClause = buildSelect<M>(this.model.columns, args.select);
     const whereClause = buildWhere(args.where, `${this.model.name}_w`, this.model.columnDefs, params, paramTypes);
     const orderByClause = buildOrderBy<M>(args.orderBy);
-    const limitClause = args.limit ? `LIMIT ${args.limit}` : '';
-    const offsetClause = args.offset ? `OFFSET ${args.offset}` : '';
+
+    const limit = args.take ?? args.limit;
+    const offset = args.skip ?? args.offset;
+
+    const limitClause = limit ? `LIMIT ${limit}` : '';
+    const offsetClause = offset ? `OFFSET ${offset}` : '';
 
     const stmt = `SELECT ${selectClause} FROM ${ident(this.model.def.table)} ${whereClause} ${orderByClause} ${limitClause} ${offsetClause}`.trim();
     const text = withDeclares(stmt, paramTypes);

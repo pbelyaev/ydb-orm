@@ -26,6 +26,26 @@ npm i @pbelyaev/ydb-orm
 
 ```ts
 import { defineSchema, ydbOrm, ydbSdkAdapter, t } from '@pbelyaev/ydb-orm';
+import { Driver, TableSessionPool, getCredentialsFromEnv } from 'ydb-sdk';
+
+const endpoint = process.env.YDB_ENDPOINT!;
+const database = process.env.YDB_DATABASE!;
+
+const driver = new Driver({
+  endpoint,
+  database,
+  authService: getCredentialsFromEnv(),
+});
+await driver.ready(10_000);
+
+const pool = new TableSessionPool({
+  database,
+  authService: driver.authService,
+  sslCredentials: driver.sslCredentials,
+  clientOptions: driver.clientOptions,
+});
+
+const adapter = ydbSdkAdapter({ pool, idempotent: true });
 
 const schema = defineSchema({
   user: {
@@ -39,24 +59,18 @@ const schema = defineSchema({
   },
 });
 
-// Official YDB SDK adapter
-// (you create the TableSessionPool; ORM generates DECLARE + binds typed params)
-//
-// import { Driver, TableSessionPool, getCredentialsFromEnv } from 'ydb-sdk';
-// const driver = new Driver({ endpoint, database, authService: getCredentialsFromEnv() });
-// await driver.ready(10000);
-// const pool = new TableSessionPool({ database, authService: driver.authService, sslCredentials: driver.sslCredentials, clientOptions: driver.clientOptions });
-//
-// const adapter = ydbSdkAdapter({ pool });
-
 const db = ydbOrm({ schema, adapter });
 
 await db.user.create({ data: { id: 1n, email: 'a@b.com', name: 'Pavel' } });
 
 const users = await db.user.findMany({
-  where: { email: { '=': 'a@b.com' } },
+  where: {
+    OR: [{ email: { '=': 'a@b.com' } }, { email: { '=': 'c@d.com' } }],
+  },
   select: { id: true, email: true },
-  limit: 10,
+  orderBy: [{ id: 'DESC' }],
+  take: 10,
+  skip: 0,
 });
 ```
 
