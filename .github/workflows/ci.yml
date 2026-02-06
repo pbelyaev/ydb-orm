@@ -9,10 +9,47 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npm run build
+
+      - name: Install
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Start local YDB
+        run: docker compose -f examples/ydb-local/docker-compose.yml up -d
+
+      - name: Wait for YDB
+        run: |
+          for i in {1..60}; do
+            if docker inspect -f '{{.State.Health.Status}}' ydb-local 2>/dev/null | grep -q healthy; then
+              echo "YDB is healthy";
+              exit 0;
+            fi
+            echo "waiting for ydb... ($i)";
+            sleep 2;
+          done
+          docker ps -a
+          docker logs ydb-local --tail 200 || true
+          exit 1
+
+      - name: Example (basic)
+        env:
+          YDB_ENDPOINT: grpc://localhost:2136
+          YDB_DATABASE: /local
+        run: |
+          cd examples/basic
+          npm install
+          npx ts-node --esm src/index.ts
+
+      - name: Stop local YDB
+        if: always()
+        run: docker compose -f examples/ydb-local/docker-compose.yml down -v
