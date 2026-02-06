@@ -29,6 +29,15 @@ export type WhereOps<T> = T extends (infer U) | null
       '<='?: U;
       IN?: U[];
       LIKE?: U extends string ? string : never;
+      // sugar
+      startsWith?: U extends string ? string : never;
+      endsWith?: U extends string ? string : never;
+      contains?: U extends string ? string : never;
+      // null checks
+      isNull?: boolean;
+      isNotNull?: boolean;
+      // ranges
+      between?: [U, U];
     }
   : {
       '='?: T;
@@ -39,6 +48,15 @@ export type WhereOps<T> = T extends (infer U) | null
       '<='?: T;
       IN?: T[];
       LIKE?: T extends string ? string : never;
+      // sugar
+      startsWith?: T extends string ? string : never;
+      endsWith?: T extends string ? string : never;
+      contains?: T extends string ? string : never;
+      // null checks
+      isNull?: boolean;
+      isNotNull?: boolean;
+      // ranges
+      between?: [T, T];
     };
 
 export type WhereFields<M> = {
@@ -138,6 +156,39 @@ function buildWhereExpr<M>(
     if (!colDef) throw new Error(`Unknown column in where: ${key}`);
 
     for (const [op, value] of Object.entries(ops as any)) {
+      if (op === 'isNull') {
+        if (value) parts.push(`${ident(key)} IS NULL`);
+        continue;
+      }
+      if (op === 'isNotNull') {
+        if (value) parts.push(`${ident(key)} IS NOT NULL`);
+        continue;
+      }
+
+      if (op === 'between') {
+        const [a, b] = value as any;
+        const nameA = `${pfx}_${key}_${c.i++}`;
+        const nameB = `${pfx}_${key}_${c.i++}`;
+        const ydbType = columnYdbType(colDef);
+        paramTypes[nameA] = ydbType;
+        params[nameA] = a;
+        paramTypes[nameB] = ydbType;
+        params[nameB] = b;
+        parts.push(`${ident(key)} BETWEEN ${param(nameA)} AND ${param(nameB)}`);
+        continue;
+      }
+
+      if (op === 'startsWith' || op === 'endsWith' || op === 'contains') {
+        const s = String(value ?? '');
+        const like = op === 'startsWith' ? `${s}%` : op === 'endsWith' ? `%${s}` : `%${s}%`;
+        const name = `${pfx}_${key}_${c.i++}`;
+        const ydbType = columnYdbType(colDef);
+        paramTypes[name] = ydbType;
+        params[name] = like;
+        parts.push(`${ident(key)} LIKE ${param(name)}`);
+        continue;
+      }
+
       const name = `${pfx}_${key}_${c.i++}`;
 
       let ydbType: Ydb.IType = columnYdbType(colDef);
