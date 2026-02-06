@@ -2,7 +2,15 @@
 
 Prisma-like ORM-ish client for **YDB (YQL / table API)**.
 
-> Status: early WIP (MVP).
+- Generates YQL with native tokens (SELECT/WHERE/UPSERT/RETURNING, ...)
+- Generates typed `DECLARE` parameters for the official `ydb-sdk`
+- Prisma-ish API without codegen
+
+> Status: MVP, API may change.
+
+## Docs
+
+- API: [`docs/API.md`](docs/API.md)
 
 ## Goals
 
