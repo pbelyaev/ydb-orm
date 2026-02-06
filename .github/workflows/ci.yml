@@ -48,7 +48,7 @@ jobs:
         run: |
           cd examples/basic
           npm install
-          node --loader ts-node/esm src/index.ts
+          npx ts-node --esm src/index.ts
 
       - name: Stop local YDB
         if: always()
