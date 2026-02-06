@@ -12,7 +12,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install
@@ -48,7 +48,7 @@ jobs:
         run: |
           cd examples/basic
           npm install
-          npx ts-node --esm src/index.ts
+          node --loader ts-node/esm src/index.ts
 
       - name: Stop local YDB
         if: always()
