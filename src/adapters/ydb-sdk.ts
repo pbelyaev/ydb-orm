@@ -7,6 +7,11 @@ const require = createRequire(typeof __filename === 'string' ? __filename : impo
 const ydb: any = require('ydb-sdk');
 const { TypedValues, TypedData, ExecuteQuerySettings, AUTO_TX } = ydb;
 
+type TxState = {
+  session: any;
+  txId: string;
+};
+
 export type YdbSdkAdapterOptions = {
   pool: TableSessionPool;
   /** If true, use idempotent execute settings where possible. */
@@ -50,20 +55,73 @@ function bindParams(q: QueryRequest): Record<string, any> {
   return out;
 }
 
-export function ydbSdkAdapter(opts: YdbSdkAdapterOptions): Adapter {
+export function ydbSdkAdapter(opts: YdbSdkAdapterOptions): Adapter & {
+  begin: () => Promise<void>;
+  commit: () => Promise<void>;
+  rollback: () => Promise<void>;
+} {
+  let tx: TxState | null = null;
+
+  async function ensureNotInTx() {
+    if (tx) throw new Error('Already in transaction');
+  }
+
+  async function ensureInTx() {
+    if (!tx) throw new Error('Not in transaction');
+  }
+
   return {
+    async begin() {
+      await ensureNotInTx();
+      // NOTE: ydb-sdk types mark acquire() as private, but it's available at runtime.
+      const session = await (opts.pool as any).acquire(10_000);
+      try {
+        const txMeta = await session.beginTransaction({ serializableReadWrite: {} });
+        tx = { session, txId: txMeta.id };
+      } catch (e) {
+        session.release();
+        throw e;
+      }
+    },
+
+    async commit() {
+      await ensureInTx();
+      const { session, txId } = tx!;
+      tx = null;
+      try {
+        await session.commitTransaction({ txId });
+      } finally {
+        session.release();
+      }
+    },
+
+    async rollback() {
+      await ensureInTx();
+      const { session, txId } = tx!;
+      tx = null;
+      try {
+        await session.rollbackTransaction({ txId });
+      } finally {
+        session.release();
+      }
+    },
+
     async query(q) {
       const settings = new ExecuteQuerySettings();
-      if (opts.idempotent) settings.withIdempotent(true);
+      // NOTE: do not force idempotent inside explicit transactions
+      if (opts.idempotent && !tx) settings.withIdempotent(true);
 
       const params = bindParams(q);
-      const res: any = await opts.pool.withSessionRetry(
-        async (session) => {
-          return session.executeQuery(q.text, params, AUTO_TX, settings);
-        },
-        undefined,
-        10,
-      );
+
+      const res: any = tx
+        ? await tx.session.executeQuery(q.text, params, { txId: tx.txId, commitTx: false }, settings)
+        : await opts.pool.withSessionRetry(
+            async (session) => {
+              return session.executeQuery(q.text, params, AUTO_TX, settings);
+            },
+            undefined,
+            10,
+          );
 
       const rs = (res.resultSets ?? [])[0];
       if (!rs) return [];

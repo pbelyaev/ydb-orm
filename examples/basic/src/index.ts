@@ -57,8 +57,10 @@ async function main() {
     10,
   );
 
-  await db.user.create({ data: { id: 1n, email: 'a@b.com', name: 'Pavel' } });
-  await db.user.create({ data: { id: 2n, email: 'c@d.com', name: null } });
+  await db.$transaction(async (tx) => {
+    await tx.user.create({ data: { id: 1n, email: 'a@b.com', name: 'Pavel' } });
+    await tx.user.create({ data: { id: 2n, email: 'c@d.com', name: null } });
+  });
 
   const rows = await db.user.findMany({
     where: { OR: [{ email: { LIKE: '%@b.com' } }, { id: { IN: [2n] } }] },
