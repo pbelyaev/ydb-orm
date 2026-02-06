@@ -403,7 +403,6 @@ export function ydbOrm<const S extends SchemaDef>(opts: { schema: S; adapter: Ad
   out.$transaction = async (fn: any) => {
     const { runInTransaction } = await import('./tx.js');
     return runInTransaction(opts.adapter as any, async () => {
-      // For now tx uses the same adapter instance (adapters may internally bind a session/tx).
       return fn(out as OrmClient<S>);
     });
   };
