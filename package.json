@@ -41,7 +41,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint .",
-    "format": "prettier -w ."
+    "format": "prettier -w .",
+    "check": "npm run lint && npm test && npm run build",
+    "prepublishOnly": "npm run check"
   },
   "dependencies": {
     "@yandex-cloud/nodejs-sdk": "^2.9.0",
