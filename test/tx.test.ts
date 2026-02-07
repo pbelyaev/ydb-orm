@@ -44,4 +44,38 @@ describe('transactions', () => {
 
     expect(calls).toEqual(['begin', 'query', 'rollback']);
   });
+
+  it('supports nested transactions when adapter exposes inTransaction()', async () => {
+    const calls: string[] = [];
+    let inTx = false;
+    const adapter: any = {
+      async query() {
+        calls.push('query');
+        return [];
+      },
+      inTransaction() {
+        return inTx;
+      },
+      async begin() {
+        calls.push('begin');
+        inTx = true;
+      },
+      async commit() {
+        calls.push('commit');
+        inTx = false;
+      },
+      async rollback() {
+        calls.push('rollback');
+        inTx = false;
+      },
+    };
+
+    await runInTransaction(adapter, async () => {
+      await runInTransaction(adapter, async (tx) => {
+        await tx.query({ text: 'x', params: {}, paramTypes: {} });
+      });
+    });
+
+    expect(calls).toEqual(['begin', 'query', 'commit']);
+  });
 });

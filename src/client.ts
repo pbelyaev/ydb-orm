@@ -73,6 +73,12 @@ export type Select<M> = {
   [K in keyof M]?: boolean;
 };
 
+type SelectedKeys<M, Sel> = Sel extends Select<M>
+  ? { [K in keyof M]: Sel[K] extends true ? K : never }[keyof M]
+  : keyof M;
+
+type SelectResult<M, Sel> = Sel extends Select<M> ? Simplify<Pick<M, SelectedKeys<M, Sel>>> : M;
+
 export type OrderDirection = 'ASC' | 'DESC';
 export type OrderBy<M> =
   | { [K in keyof M]?: OrderDirection }
@@ -106,6 +112,14 @@ export type CreateArgs<M> = {
   returning?: Select<M>;
 };
 
+export type UpsertArgs<M> = {
+  /** Unique selector: requires equality for all primary key columns. */
+  where: WhereFields<M>;
+  create: DeepPartial<M>;
+  update: DeepPartial<M>;
+  returning?: Select<M>;
+};
+
 export type CreateManyArgs<M> = {
   data: Array<DeepPartial<M>>;
 };
@@ -116,9 +130,18 @@ export type UpdateArgs<M> = {
   returning?: Select<M>;
 };
 
+export type UpdateManyArgs<M> = {
+  where?: Where<M>;
+  data: DeepPartial<M>;
+};
+
 export type DeleteArgs<M> = {
   where: Where<M>;
   returning?: Select<M>;
+};
+
+export type DeleteManyArgs<M> = {
+  where?: Where<M>;
 };
 
 function buildSelect<M>(cols: (keyof M & string)[], select?: Select<M>): string {
@@ -202,7 +225,15 @@ function buildWhereExpr<M>(
       params[name] = value;
 
       if (op === 'IN') {
-        parts.push(`${ident(key)} IN ${param(name)}`);
+        // Edge case: empty IN list should match nothing.
+        if (Array.isArray(value) && value.length === 0) {
+          // Avoid generating invalid "IN ()" and avoid binding an unused param.
+          delete params[name];
+          delete paramTypes[name];
+          parts.push('FALSE');
+        } else {
+          parts.push(`${ident(key)} IN ${param(name)}`);
+        }
       } else if (op === 'LIKE') {
         parts.push(`${ident(key)} LIKE ${param(name)}`);
       } else {
@@ -314,7 +345,10 @@ export class ModelClient<M extends Record<string, any>> {
     private readonly adapter: Adapter,
   ) {}
 
-  async findMany(args: FindManyArgs<M> = {}): Promise<Array<Partial<M>>> {
+  async findMany(): Promise<Array<M>>;
+  async findMany<const Sel extends Select<M>>(args: FindManyArgs<M> & { select: Sel }): Promise<Array<SelectResult<M, Sel>>>;
+  async findMany(args: FindManyArgs<M> = {}): Promise<Array<any>> {
+
     const params: Record<string, any> = {};
     const paramTypes: Record<string, Ydb.IType> = {};
 
@@ -334,18 +368,24 @@ export class ModelClient<M extends Record<string, any>> {
     return rows.map((r) => pickSelected(r as any, args.select));
   }
 
-  async findFirst(args: FindFirstArgs<M> = {}): Promise<Partial<M> | null> {
-    const rows = await this.findMany({ ...args, limit: args.limit ?? 1 });
+  async findFirst(): Promise<M | null>;
+  async findFirst<const Sel extends Select<M>>(args: FindFirstArgs<M> & { select: Sel }): Promise<SelectResult<M, Sel> | null>;
+  async findFirst(args: FindFirstArgs<M> = {}): Promise<any | null> {
+    const rows = await this.findMany({ ...args, limit: args.limit ?? 1 } as any);
     return rows[0] ?? null;
   }
 
-  async findUnique(args: FindUniqueArgs<M>): Promise<Partial<M> | null> {
+  async findUnique(args: FindUniqueArgs<M>): Promise<M | null>;
+  async findUnique<const Sel extends Select<M>>(args: FindUniqueArgs<M> & { select: Sel }): Promise<SelectResult<M, Sel> | null>;
+  async findUnique(args: FindUniqueArgs<M>): Promise<any | null> {
     assertUniqueByPrimaryKey(this.model, args.where);
     // Reuse findFirst machinery
-    return this.findFirst({ where: args.where as any, select: args.select, limit: 1 });
+    return this.findFirst({ where: args.where as any, select: args.select, limit: 1 } as any);
   }
 
-  async create(args: CreateArgs<M>): Promise<Partial<M> | null> {
+  async create(args: CreateArgs<M>): Promise<M | null>;
+  async create<const Ret extends Select<M>>(args: CreateArgs<M> & { returning: Ret }): Promise<SelectResult<M, Ret> | null>;
+  async create(args: CreateArgs<M>): Promise<any | null> {
     const cols = Object.keys(args.data) as (keyof M & string)[];
     const params: Record<string, any> = {};
     const paramTypes: Record<string, Ydb.IType> = {};
@@ -375,6 +415,38 @@ export class ModelClient<M extends Record<string, any>> {
     const rows = await this.adapter.query({ text, params, paramTypes });
     const row = rows[0] as any;
     return row ? (args.returning ? pickSelected(row, args.returning as any) : row) : null;
+  }
+
+  async upsert(args: UpsertArgs<M>): Promise<M | null>;
+  async upsert<const Ret extends Select<M>>(args: UpsertArgs<M> & { returning: Ret }): Promise<SelectResult<M, Ret> | null>;
+  async upsert(args: UpsertArgs<M>): Promise<any | null> {
+    assertUniqueByPrimaryKey(this.model, args.where);
+
+    const { runInTransaction } = await import('./tx.js');
+
+    return runInTransaction(this.adapter as any, async () => {
+      // 1) Try update
+      const updated = await this.update({
+        where: args.where as any,
+        data: args.update,
+        returning: args.returning,
+      } as any);
+      if (updated) return updated;
+
+      // 2) Create: ensure PK fields present
+      const pk = this.model.def.primaryKey as string[];
+      const pkData: any = {};
+      for (const k of pk) {
+        const ops = (args.where as any)[k];
+        pkData[k] = ops?.['='];
+      }
+
+      const created = await this.create({
+        data: { ...pkData, ...(args.create as any) },
+        returning: args.returning,
+      } as any);
+      return created;
+    });
   }
 
   async createMany(args: CreateManyArgs<M>): Promise<{ count: number }> {
@@ -424,7 +496,9 @@ export class ModelClient<M extends Record<string, any>> {
     return { count: args.data.length };
   }
 
-  async update(args: UpdateArgs<M>): Promise<Partial<M> | null> {
+  async update(args: UpdateArgs<M>): Promise<M | null>;
+  async update<const Ret extends Select<M>>(args: UpdateArgs<M> & { returning: Ret }): Promise<SelectResult<M, Ret> | null>;
+  async update(args: UpdateArgs<M>): Promise<any | null> {
     const params: Record<string, any> = {};
     const paramTypes: Record<string, Ydb.IType> = {};
 
@@ -462,7 +536,45 @@ export class ModelClient<M extends Record<string, any>> {
     return row ? (args.returning ? pickSelected(row, args.returning as any) : row) : null;
   }
 
-  async delete(args: DeleteArgs<M>): Promise<Partial<M> | null> {
+  async updateMany(args: UpdateManyArgs<M>): Promise<{ count: number }> {
+    const params: Record<string, any> = {};
+    const paramTypes: Record<string, Ydb.IType> = {};
+
+    const setParts: string[] = [];
+    let i = 0;
+    for (const [col, value] of Object.entries(args.data as any)) {
+      const pn = `${this.model.name}_um_${i++}`;
+      const colDef = this.model.columnDefs[col];
+      if (!colDef) throw new Error(`Unknown column in updateMany: ${col}`);
+
+      if (value === null && !(colDef as any).isNullable) {
+        throw new Error(`Non-nullable column cannot be null: ${col}`);
+      }
+
+      params[pn] = value;
+      paramTypes[pn] = columnYdbType(colDef);
+      setParts.push(`${ident(col)} = ${param(pn)}`);
+    }
+
+    const setClause = setParts.length ? `SET ${setParts.join(', ')}` : '';
+    const whereClause = buildWhere(
+      args.where,
+      `${this.model.name}_umw`,
+      this.model.columnDefs,
+      params,
+      paramTypes,
+    );
+
+    // Use RETURNING 1 to count affected rows reliably without relying on SDK-specific metadata.
+    const stmt = `UPDATE ${ident(this.model.def.table)} ${setClause} ${whereClause} RETURNING 1 AS __ydb_orm_one`.trim();
+    const text = withDeclares(stmt, paramTypes);
+    const rows = await this.adapter.query({ text, params, paramTypes });
+    return { count: rows.length };
+  }
+
+  async delete(args: DeleteArgs<M>): Promise<M | null>;
+  async delete<const Ret extends Select<M>>(args: DeleteArgs<M> & { returning: Ret }): Promise<SelectResult<M, Ret> | null>;
+  async delete(args: DeleteArgs<M>): Promise<any | null> {
     const params: Record<string, any> = {};
     const paramTypes: Record<string, Ydb.IType> = {};
 
@@ -480,6 +592,24 @@ export class ModelClient<M extends Record<string, any>> {
     const rows = await this.adapter.query({ text, params, paramTypes });
     const row = rows[0] as any;
     return row ? (args.returning ? pickSelected(row, args.returning as any) : row) : null;
+  }
+
+  async deleteMany(args: DeleteManyArgs<M> = {}): Promise<{ count: number }> {
+    const params: Record<string, any> = {};
+    const paramTypes: Record<string, Ydb.IType> = {};
+
+    const whereClause = buildWhere(
+      args.where,
+      `${this.model.name}_dmw`,
+      this.model.columnDefs,
+      params,
+      paramTypes,
+    );
+
+    const stmt = `DELETE FROM ${ident(this.model.def.table)} ${whereClause} RETURNING 1 AS __ydb_orm_one`.trim();
+    const text = withDeclares(stmt, paramTypes);
+    const rows = await this.adapter.query({ text, params, paramTypes });
+    return { count: rows.length };
   }
 }
 

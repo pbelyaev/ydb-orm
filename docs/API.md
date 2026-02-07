@@ -66,6 +66,11 @@ db.user.findMany({
 ```
 
 - `where` supports column operators: `=`, `!=`, `>`, `>=`, `<`, `<=`, `IN`, `LIKE`
+- extra `where` operators:
+  - string sugar: `startsWith`, `endsWith`, `contains` (compiled into `LIKE`)
+  - null checks: `isNull`, `isNotNull`
+  - ranges: `between: [a, b]`
+  - `IN: []` is compiled into `FALSE` (matches nothing)
 - logical operators: `AND`, `OR`, `NOT`
 - pagination:
   - `limit`/`offset` (SQL-like)
@@ -89,17 +94,41 @@ await db.user.findUnique({
 
 Uses YQL `UPSERT INTO ... VALUES ...`.
 
+### `upsert`
+
+Prisma-like upsert by primary key.
+
+- Requires equality (`=`) for **all primary key columns** in `where`.
+- Runs as: `UPDATE ... RETURNING ...` and if no rows returned, then `UPSERT ... RETURNING ...`.
+- If adapter supports explicit transactions, it will be run inside a transaction.
+
 ### `update`
 
 Uses YQL `UPDATE ... SET ... WHERE ...`.
+
+### `updateMany`
+
+Updates many rows.
+
+Returns `{ count }` (number of affected rows). Implemented via `RETURNING 1`.
 
 ### `delete`
 
 Uses YQL `DELETE FROM ... WHERE ...`.
 
+### `deleteMany`
+
+Deletes many rows.
+
+Returns `{ count }` (number of affected rows). Implemented via `RETURNING 1`.
+
 ## Adapter
 
 ### `ydbSdkAdapter`
+
+Notes:
+- Supports explicit transactions via `$transaction(...)`.
+- Nested `$transaction(...)` calls will reuse the outer transaction (no double begin/commit), when the adapter supports `inTransaction()`.
 
 ```ts
 import { ydbSdkAdapter } from '@pbelyaev/ydb-orm';

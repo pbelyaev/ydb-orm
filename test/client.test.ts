@@ -182,4 +182,78 @@ describe('ydb-orm query builder', () => {
     expect(calls[0].text).toContain('WHERE');
     expect(Object.keys(calls[0].paramTypes).length).toBe(1);
   });
+
+  it('updateMany returns count and uses RETURNING 1', async () => {
+    const { adapter, calls } = makeAdapter();
+    // make adapter return 3 rows
+    (adapter as any).query = async (q: any) => {
+      calls.push(q);
+      return [{ __ydb_orm_one: 1 }, { __ydb_orm_one: 1 }, { __ydb_orm_one: 1 }];
+    };
+
+    const db = ydbOrm({ schema, adapter });
+
+    const res = await db.user.updateMany({ where: { id: { '>=': 1n } }, data: { name: 'X' } });
+
+    expect(res.count).toBe(3);
+    expect(calls[0].text).toContain('UPDATE');
+    expect(calls[0].text).toContain('RETURNING 1 AS __ydb_orm_one');
+  });
+
+  it('deleteMany returns count and uses RETURNING 1', async () => {
+    const { adapter, calls } = makeAdapter();
+    (adapter as any).query = async (q: any) => {
+      calls.push(q);
+      return [{ __ydb_orm_one: 1 }, { __ydb_orm_one: 1 }];
+    };
+
+    const db = ydbOrm({ schema, adapter });
+
+    const res = await db.user.deleteMany({ where: { id: { '>=': 1n } } });
+
+    expect(res.count).toBe(2);
+    expect(calls[0].text).toContain('DELETE FROM');
+    expect(calls[0].text).toContain('RETURNING 1 AS __ydb_orm_one');
+  });
+
+  it('upsert uses update then create (inside transaction when supported)', async () => {
+    const calls: string[] = [];
+    const queries: any[] = [];
+
+    let step = 0;
+    const adapter: any = {
+      async begin() {
+        calls.push('begin');
+      },
+      async commit() {
+        calls.push('commit');
+      },
+      async rollback() {
+        calls.push('rollback');
+      },
+      async query(q: any) {
+        queries.push(q);
+        calls.push('query');
+        step += 1;
+        // 1) UPDATE returns empty -> not found
+        if (step === 1) return [];
+        // 2) UPSERT returns one row
+        return [{ id: 1n }];
+      },
+    };
+
+    const db = ydbOrm({ schema, adapter });
+
+    const res = await db.user.upsert({
+      where: { id: { '=': 1n } },
+      update: { name: 'X' },
+      create: { email: 'a@b.com', name: 'X' },
+      returning: { id: true },
+    });
+
+    expect(res).toEqual({ id: 1n });
+    expect(calls).toEqual(['begin', 'query', 'query', 'commit']);
+    expect(queries[0].text).toContain('UPDATE');
+    expect(queries[1].text).toContain('UPSERT INTO');
+  });
 });

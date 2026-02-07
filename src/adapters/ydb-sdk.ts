@@ -1,9 +1,7 @@
 import type { Adapter, QueryRequest } from '../client.js';
-import { createRequire } from 'node:module';
 import type { Ydb, TableSessionPool } from 'ydb-sdk';
+import { require } from '../require.js';
 
-// Works in both ESM and CJS builds
-const require = createRequire(typeof __filename === 'string' ? __filename : import.meta.url);
 const ydb: any = require('ydb-sdk');
 const { TypedValues, TypedData, ExecuteQuerySettings, AUTO_TX } = ydb;
 
@@ -69,25 +67,33 @@ export function ydbSdkAdapter(opts: YdbSdkAdapterOptions): Adapter & {
   begin: () => Promise<void>;
   commit: () => Promise<void>;
   rollback: () => Promise<void>;
+  inTransaction: () => boolean;
 } {
   let tx: TxState | null = null;
-
-  async function ensureNotInTx() {
-    if (tx) throw new Error('Already in transaction');
-  }
+  let txDepth = 0;
 
   async function ensureInTx() {
-    if (!tx) throw new Error('Not in transaction');
+    if (!tx || txDepth <= 0) throw new Error('Not in transaction');
   }
 
   return {
+    inTransaction() {
+      return !!tx && txDepth > 0;
+    },
+
     async begin() {
-      await ensureNotInTx();
+      // Support nesting: a nested begin() is a no-op.
+      if (tx) {
+        txDepth += 1;
+        return;
+      }
+
       // NOTE: ydb-sdk types mark acquire() as private, but it's available at runtime.
       const session = await (opts.pool as any).acquire(10_000);
       try {
         const txMeta = await session.beginTransaction({ serializableReadWrite: {} });
         tx = { session, txId: txMeta.id };
+        txDepth = 1;
       } catch (e) {
         session.release();
         throw e;
@@ -96,8 +102,14 @@ export function ydbSdkAdapter(opts: YdbSdkAdapterOptions): Adapter & {
 
     async commit() {
       await ensureInTx();
+      if (txDepth > 1) {
+        txDepth -= 1;
+        return;
+      }
+
       const { session, txId } = tx!;
       tx = null;
+      txDepth = 0;
       try {
         await session.commitTransaction({ txId });
       } finally {
@@ -107,8 +119,10 @@ export function ydbSdkAdapter(opts: YdbSdkAdapterOptions): Adapter & {
 
     async rollback() {
       await ensureInTx();
+      // Any rollback aborts the whole transaction.
       const { session, txId } = tx!;
       tx = null;
+      txDepth = 0;
       try {
         await session.rollbackTransaction({ txId });
       } finally {

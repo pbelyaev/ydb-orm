@@ -1,8 +1,6 @@
-import { createRequire } from 'node:module';
 import type { Ydb } from 'ydb-sdk';
+import { require } from './require.js';
 
-// Works in both ESM and CJS builds
-const require = createRequire(typeof __filename === 'string' ? __filename : import.meta.url);
 const ydb: any = require('ydb-sdk');
 const { Types } = ydb;
 
