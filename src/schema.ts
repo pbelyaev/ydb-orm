@@ -122,6 +122,38 @@ for (const k of Object.keys(t) as (keyof typeof t)[]) {
   t[k] = (...args: any[]) => withNullable(fn(...args));
 }
 
+function validateSchema(schema: SchemaDef): void {
+  for (const [modelName, model] of Object.entries(schema)) {
+    const cols = model.columns ?? {};
+    const colKeys = new Set(Object.keys(cols));
+
+    if (!Array.isArray(model.primaryKey) || model.primaryKey.length === 0) {
+      throw new Error(
+        `Invalid schema for model "${modelName}": primaryKey must be a non-empty array`,
+      );
+    }
+
+    const seen = new Set<string>();
+    for (const k of model.primaryKey) {
+      if (seen.has(k)) {
+        throw new Error(
+          `Invalid schema for model "${modelName}": primaryKey contains duplicate key "${k}"`,
+        );
+      }
+      seen.add(k);
+
+      if (!colKeys.has(k)) {
+        throw new Error(
+          `Invalid schema for model "${modelName}": primaryKey references missing column "${k}"`,
+        );
+      }
+    }
+  }
+}
+
 export function defineSchema<S extends SchemaDef>(schema: S): S {
+  // Lightweight runtime validation to catch schema mistakes early.
+  // (Skipped in production to avoid overhead in hot paths.)
+  if (process.env.NODE_ENV !== 'production') validateSchema(schema);
   return schema;
 }
