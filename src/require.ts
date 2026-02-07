@@ -9,7 +9,6 @@ import { createRequire } from 'node:module';
 function getMetaUrl(): string {
   try {
     // Use eval to avoid referencing `import.meta` syntactically in CJS output.
-    // eslint-disable-next-line no-eval
     return (0, eval)('import.meta.url') as string;
   } catch {
     return '';
