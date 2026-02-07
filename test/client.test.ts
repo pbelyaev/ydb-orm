@@ -136,6 +136,24 @@ describe('ydb-orm query builder', () => {
     ).resolves.not.toThrow();
   });
 
+  it('count builds SELECT COUNT(*) with optional WHERE and returns bigint', async () => {
+    const { adapter, calls } = makeAdapter();
+    (adapter as any).query = async (q: any) => {
+      calls.push(q);
+      return [{ __ydb_orm_count: 3n }];
+    };
+    const db = ydbOrm({ schema, adapter });
+
+    const res = await db.user.count({ where: { email: { LIKE: '%@b.com' } } });
+
+    expect(res).toBe(3n);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].text).toContain('SELECT COUNT(*) AS __ydb_orm_count');
+    expect(calls[0].text).toContain('FROM');
+    expect(calls[0].text).toContain('WHERE');
+    expect(Object.keys(calls[0].paramTypes).length).toBe(1);
+  });
+
   it('create builds UPSERT INTO with params', async () => {
     const { adapter, calls } = makeAdapter();
     const db = ydbOrm({ schema, adapter });

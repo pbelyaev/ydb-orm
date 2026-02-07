@@ -107,6 +107,10 @@ export type FindUniqueArgs<M> = {
   select?: Select<M>;
 };
 
+export type CountArgs<M> = {
+  where?: Where<M>;
+};
+
 export type CreateArgs<M> = {
   data: DeepPartial<M>;
   returning?: Select<M>;
@@ -334,6 +338,13 @@ function assertUniqueByPrimaryKey<M extends Record<string, any>>(
   }
 }
 
+function normalizeCountValue(v: unknown): bigint {
+  if (typeof v === 'bigint') return v;
+  if (typeof v === 'number') return BigInt(v);
+  if (typeof v === 'string' && /^\d+$/.test(v)) return BigInt(v);
+  throw new Error(`Invalid count value returned by adapter: ${String(v)}`);
+}
+
 export class ModelClient<M extends Record<string, any>> {
   constructor(
     private readonly model: {
@@ -381,6 +392,20 @@ export class ModelClient<M extends Record<string, any>> {
     assertUniqueByPrimaryKey(this.model, args.where);
     // Reuse findFirst machinery
     return this.findFirst({ where: args.where as any, select: args.select, limit: 1 } as any);
+  }
+
+  async count(args: CountArgs<M> = {}): Promise<bigint> {
+    const params: Record<string, any> = {};
+    const paramTypes: Record<string, Ydb.IType> = {};
+
+    const whereClause = buildWhere(args.where, `${this.model.name}_cw`, this.model.columnDefs, params, paramTypes);
+
+    const stmt = `SELECT COUNT(*) AS __ydb_orm_count FROM ${ident(this.model.def.table)} ${whereClause}`.trim();
+    const text = withDeclares(stmt, paramTypes);
+    const rows = await this.adapter.query({ text, params, paramTypes });
+    const row = rows[0] as any;
+    if (!row) return 0n;
+    return normalizeCountValue(row.__ydb_orm_count ?? row.count);
   }
 
   async create(args: CreateArgs<M>): Promise<M | null>;
